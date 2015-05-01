@@ -108,6 +108,8 @@ function crawlerPage(url){
 	page.settings.userAgent = 'Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.57 Safari/537.36';
 	page.settings.resourceTimeout = 30000;
 
+	page.viewportSize = { width:1000, height:800 };
+
 	page.onConsoleMessage=function(data){
 		console.log(data);
 		if( ( new RegExp ("^"+_MSGSIGN) ).test(data) ){
@@ -150,7 +152,12 @@ function crawlerPage(url){
 	    console.log('Response (#' + request.id + '): ' + JSON.stringify(request));
 	};
 	page.onResourceRequested = function(data, req) {
-	  //req.abort();
+		return;
+		var header = {};
+		_.each(data.headers, function(v){ header[v.name] = v.value; } );
+		console.log(data.id, data.method, _.keys(header));
+		if( header["X-Requested-With"] == "XMLHttpRequest" ) return;
+	  	if(data.id>1) req.abort();
 	};
 
 	page.open(url, function(status){
@@ -158,8 +165,10 @@ function crawlerPage(url){
 		if(status=="fail") return;
 
 		page.injectJs(  phantom.libraryPath + '/modules/zz.js'  );
+		page.injectJs(  phantom.libraryPath + '/modules/underscore.js'  );
 
-		fs.write( filebase + "_html.txt", page.content, 'a');
+		fs.write( filebase + "_email.txt", "", 'w');
+		fs.write( filebase + "_html.txt", page.content, 'w');
 		page.render( filebase+".png");
 
 		var c = page.evaluate( function(host, _MSGSIGN) {
@@ -171,14 +180,13 @@ function crawlerPage(url){
 		function getEmail(){
 			var emailRE = /\b(([^<>()[\]\\.,;:\s@\"]+(\.[^<>()[\]\\.,;:\s@\"]+)*)|(\".+\"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))\b/igm;
 	        var email = html.match(emailRE);
-	        email = email ? email.map(function(v,i){ return v; }).join(";") : "";
+	        email = email ? _.uniq( email.map(function(v,i){ return ZZ.trim(v); }) ).join(";") : "";
 			return email;
 		}
 		function getPhone(){
-			var phoneRE = /(:?tel|phone|mobile).*(\+?[0-9\.\-\(\) ]+)/igm;
-			phoneRE = re=/(\+?(?:(?:9[976]\d|8[987530]\d|6[987]\d|5[90]\d|42\d|3[875]\d|2[98654321]\d|9[8543210]|8[6421]|6[6543210]|5[87654321]|4[987654310]|3[9643210]|2[70]|7|0|1)|\((?:9[976]\d|8[987530]\d|6[987]\d|5[90]\d|42\d|3[875]\d|2[98654321]\d|9[8543210]|8[6421]|6[6543210]|5[87654321]|4[987654310]|3[9643210]|2[70]|7|1)\))[0-9. -]{4,14})(?:\b|x\d+)/ig;
-	        var phone = html.match(phoneRE);
-	        phone = phone ? phone.map(function(v,i){ return v; }).join(";") : "";
+			var phoneRE =/\+?\(?[\+0-9. \n\(\)-]{3,8}\)?[0-9. \n\(\)-]{2,14}\d(?:\s*-\s*[0-9]+)?/ig;
+	        var phone = html.replace(/&nbsp;/ig," ").replace(/\n|<br>|<\/br>/ig,"").match(phoneRE);
+	        phone = phone ? _.uniq( phone.filter( function(v,i){ v=ZZ.trim(v); var dot=v.match(/([\d]\.[\d])/ig); if(dot==null || dot.length>1) if( v.length>9 && /[\) \n-.]+/.test(v) && /^[+0\(\d]/.test(v) )  return true; }) ).join(";") : ""; //
 			return phone;
 		}
 		return getEmail() + ", phone: " + getPhone();
@@ -204,8 +212,6 @@ function crawlerPage(url){
 			return true;
 		} else if( a.length!=b.length ){
 			return false;
-		} else if( a[0].split('/').length==b[0].split('/').length ){
-			return true;
 		} else if( a[0]==b[0] ){
 			return true;
 		}else{
@@ -236,7 +242,7 @@ function crawlerPage(url){
 	}
 
 	var ROOT_URL = window.location.href;
-	var MAX_LEVEL = 3;
+	var MAX_LEVEL = 1;
 	var SAME_COUNT = 20;
 	var LinkQueue={};
 	var LinkArray=[];
@@ -273,13 +279,15 @@ function crawlerPage(url){
 		setTimeout( function(){
 			ZZ.ajax({
 				type: 'GET',   
-				url: theurl,  
+				url: theurl, 
 				async: true, 
 				success: function(data){
+					var dom = ZZ( '<div></div>' );
+					dom.html(data);
 					
-					console.log(_MSGSIGN + "url: "+ theurl + ", email: " + parseHTML( ZZ('body').html(), theurl ) );
+					console.log(_MSGSIGN + "url: "+ theurl + "\n, title: " + ZZ("title", dom).text() + "\n\n, email: " + parseHTML( data, theurl ) );
 
-					ZZ(data).find('a').each(function(){
+					ZZ("a", dom).each(function(){
 						LinkQueue[theurl].urls.push(this.href);
 						getURL( this.href, theurl );
 					});
@@ -317,7 +325,8 @@ function crawlerPage(url){
 
 }
 
-//crawlerPage("http://cn.bing.com");
-crawlerPage("http://www.topvaluefabrics.com/polyester-fabrics.html");
+//crawlerPage("http://cn.bing.com");our-locations.html
+//crawlerPage("http://www.topvaluefabrics.com/");
+crawlerPage("http://www.unitedasia.com.cn/");
 
 
