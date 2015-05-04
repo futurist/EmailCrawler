@@ -175,21 +175,47 @@ function crawlerPage(url){
 
 (function (){
 
-	function parseHTML(html, link){
+
+	function matchAll(str, re) {
+	  var m, matches = [];
+	  while( m = str.match(re) ){
+	  		matches.push(m);
+	  		str=str.replace(re, "");
+	  }
+	  return matches.length ? matches : null;
+	};
+
+	function parseHTML(html, text, link){
 		ParsedArray.push(link);
 		function getEmail(){
+			if(!html)return "";
 			var emailRE = /\b(([^<>()[\]\\.,;:\s@\"]+(\.[^<>()[\]\\.,;:\s@\"]+)*)|(\".+\"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))\b/igm;
 	        var email = html.match(emailRE);
 	        email = email ? _.uniq( email.map(function(v,i){ return ZZ.trim(v); }) ).join(";") : "";
 			return email;
 		}
 		function getPhone(){
-			var phoneRE =/\+?\(?[\+0-9. \n\(\)-]{3,8}\)?[0-9. \n\(\)-]{2,14}\d(?:\s*-\s*[0-9]+)?/ig;
-	        var phone = html.replace(/&nbsp;/ig," ").replace(/\n|<br>|<\/br>/ig,"").match(phoneRE);
-	        phone = phone ? _.uniq( phone.filter( function(v,i){ v=ZZ.trim(v); var dot=v.match(/([\d]\.[\d])/ig); if(dot==null || dot.length>1) if( v.length>9 && /[\) \n-.]+/.test(v) && /^[+0\(\d]/.test(v) )  return true; }) ).join(";") : ""; //
+			if(!html)return "";
+			var re =/\+?\(?[\+0-9. \n\(\)-]{3,8}\)?[0-9. \n\(\)-]{2,14}\d(?:\s*-\s*[0-9]+)?/ig;
+	        var match = html.replace(/&nbsp;/ig," ").replace(/\n|<br>|<\/br>/ig,"").match(re);
+	        phone = match ? _.uniq( match.filter( function(v,i){ v=ZZ.trim(v); var dot=v.match(/([\d]\.[\d])/ig); if(dot==null || dot.length>1) if( v.length>9 && /[\) \n-.]+/.test(v) && /^[+0\(\d]/.test(v) )  return true; }) ).join(";") : ""; //
 			return phone;
 		}
-		return getEmail() + ", phone: " + getPhone();
+		function getFax(){
+			if(!text)return "";
+			var re =/fax[^\d+\(]*(\+?\(?[\+0-9. \n\(\)-]{3,8}\)?[0-9. \n\(\)-]{2,14}\d(?:\s*-\s*[0-9]+)?)/i;
+	        var match = matchAll( text.replace(/\n/ig, " "), re);
+	        var fax = match && match.length>0 ? _.pluck(match,1).join(";") : ""; //
+			return fax;
+		}
+		function getAddress(){
+			if(!text)return "";
+			var re =/(?:address|addr|add)[^\w]*([\w\d-,.#\s]+)/i;
+	        var match = matchAll( text.replace(/\n/ig, " "), re);
+	        var addr = match && match.length>0 ? _.pluck(match,1).join(";") : ""; //
+			return addr;
+		}
+		return getEmail() + ", phone: " + getPhone()+ ", fax: " + getFax()+ ", addr: " + getAddress();
 	}
 
 
@@ -285,7 +311,7 @@ function crawlerPage(url){
 					var dom = ZZ( '<div></div>' );
 					dom.html(data);
 					
-					console.log(_MSGSIGN + "url: "+ theurl + "\n, title: " + ZZ("title", dom).text() + "\n\n, email: " + parseHTML( data, theurl ) );
+					console.log(_MSGSIGN + "url: "+ theurl + "\n, title: " + ZZ("title", dom).text() + "\n\n, email: " + parseHTML( data, ZZ("body", dom).text(), theurl ) );
 
 					ZZ("a", dom).each(function(){
 						LinkQueue[theurl].urls.push(this.href);
@@ -309,7 +335,7 @@ function crawlerPage(url){
 	LinkArray.push(ROOT_URL);
 	LinkQueue[ROOT_URL] = {urls: [], parent:null};
 
-	console.log(_MSGSIGN, "email: ", parseHTML( ZZ('body').html(), window.location.href ) );
+	console.log(_MSGSIGN, "email: ", parseHTML( ZZ('body').html(), ZZ('body').text(), window.location.href ) );
 
 	ZZ('a').each(function(){ 
 
@@ -325,8 +351,8 @@ function crawlerPage(url){
 
 }
 
-//crawlerPage("http://cn.bing.com");our-locations.html
-//crawlerPage("http://www.topvaluefabrics.com/");
+//crawlerPage("http://cn.bing.com");
+//crawlerPage("http://www.topvaluefabrics.com/our-locations.html");
 crawlerPage("http://www.unitedasia.com.cn/");
 
 
