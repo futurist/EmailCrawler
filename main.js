@@ -94,15 +94,35 @@ function paramToJson(str) {
     }, {});
 }
 
+
+var _MSGSIGN = "PHANTOMDATA";
+
 function crawlerPage(url){
+
+	
+	var urlObj= parseUrl(url);
+	var host = urlObj.base;
+	var filebase = host.split("//")[1].split("/")[0];
 
 	var page = require('webpage').create();
 	page.settings.userAgent = 'Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.57 Safari/537.36';
+	page.settings.resourceTimeout = 30000;
+
+	page.viewportSize = { width:1000, height:800 };
 
 	page.onConsoleMessage=function(data){
 		console.log(data);
+		if( ( new RegExp ("^"+_MSGSIGN) ).test(data) ){
+			var d = (data.split(_MSGSIGN)[1]);
+
+			if(d=="EXIT()"){
+				setTimeout(function(){ phantom.exit(); }, 1000);
+				return;
+			}
+
+			fs.write( filebase + "_email.txt", d+"\n\n", 'a');
+		}
 	}
-	console.log( 234, parseUrl('http://www.baidu.com/s?q=234&t=23434').param.q ); return;
 
 
 	page.onError = function(msg, trace) {
@@ -123,68 +143,190 @@ function crawlerPage(url){
 	page.onResourceError = function(resourceError) {
 	  console.log('Unable to load resource (#' + resourceError.id + 'URL:' + resourceError.url + ')');
 	  console.log('Error code: ' + resourceError.errorCode + '. Description: ' + resourceError.errorString);
-	};
+	  //Error code: 99. Description: Connection timed out
+	  if(resourceError.id==1){	//The main url, when timeout or error
 
+	  }
+	};
+	page.onResourceTimeout = function(request) {
+	    console.log('Response (#' + request.id + '): ' + JSON.stringify(request));
+	};
 	page.onResourceRequested = function(data, req) {
-	  //req.abort();
+		return;
+		var header = {};
+		_.each(data.headers, function(v){ header[v.name] = v.value; } );
+		console.log(data.id, data.method, _.keys(header));
+		if( header["X-Requested-With"] == "XMLHttpRequest" ) return;
+	  	if(data.id>1) req.abort();
 	};
-	
-	var urlObj= parseUrl(url);
-	var host = urlObj.base;
 
+	page.open(url, function(status){
 
-	var i=0;
-	page.open(url, function(e){
+		if(status=="fail") return;
+
 		page.injectJs(  phantom.libraryPath + '/modules/zz.js'  );
-		fs.write(i+".txt", page.plainText+"\n", 'w');
+		page.injectJs(  phantom.libraryPath + '/modules/underscore.js'  );
 
-		var c = page.evaluate( function(host) {
-			
-			function __sameUrl(url1, url2){
-				var a = url1.split('#')[0].split('?');
-				var b = url2.split('#')[0].split('?');
-				if(a.length>1 && b.length>1 && a.length==b.length){
-					if(a[0]!=b[0]){
-						return false;
-					}
+		fs.write( filebase + "_email.txt", "", 'w');
+		fs.write( filebase + "_html.txt", page.content, 'w');
+		page.render( filebase+".png");
 
-					var a1=a[1].split(/\=[^&]*&*/);
-					var b1=b[1].split(/\=[^&]*&*/);
-					for(var i=0; i<a1.length; i++){
-						if(b1.indexOf(a1[i])==-1)return false; 
-					}
+		var c = page.evaluate( function(host, _MSGSIGN) {
+
+(function (){
+
+	function parseHTML(html, link){
+		ParsedArray.push(link);
+		function getEmail(){
+			var emailRE = /\b(([^<>()[\]\\.,;:\s@\"]+(\.[^<>()[\]\\.,;:\s@\"]+)*)|(\".+\"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))\b/igm;
+	        var email = html.match(emailRE);
+	        email = email ? _.uniq( email.map(function(v,i){ return ZZ.trim(v); }) ).join(";") : "";
+			return email;
+		}
+		function getPhone(){
+			var phoneRE =/\+?\(?[\+0-9. \n\(\)-]{3,8}\)?[0-9. \n\(\)-]{2,14}\d(?:\s*-\s*[0-9]+)?/ig;
+	        var phone = html.replace(/&nbsp;/ig," ").replace(/\n|<br>|<\/br>/ig,"").match(phoneRE);
+	        phone = phone ? _.uniq( phone.filter( function(v,i){ v=ZZ.trim(v); var dot=v.match(/([\d]\.[\d])/ig); if(dot==null || dot.length>1) if( v.length>9 && /[\) \n-.]+/.test(v) && /^[+0\(\d]/.test(v) )  return true; }) ).join(";") : ""; //
+			return phone;
+		}
+		return getEmail() + ", phone: " + getPhone();
+	}
+
+
+
+
+	function sameURL(url1, url2){
+		if(url1==url2) return true;
+		var a = url1.split('#')[0].split('?');
+		var b = url2.split('#')[0].split('?');
+		if(a.length>1 && b.length>1 && a.length==b.length){
+			if(a[0]!=b[0]){
+				return false;
+			}
+
+			var a1=a[1].split(/\=[^&]*&*/);
+			var b1=b[1].split(/\=[^&]*&*/);
+			for(var i=0; i<a1.length; i++){
+				if(b1.indexOf(a1[i])==-1)return false; 
+			}
+			return true;
+		} else if( a.length!=b.length ){
+			return false;
+		} else if( a[0]==b[0] ){
+			return true;
+		}else{
+			return false;
+		}
+	}
+
+	function validURL(url){
+		if( ! /^http/.test(url) ) return false;
+		if( url.indexOf(host)==-1 ) return false  ;
+		var valid = true;
+		var i=0;
+		//NOT VALID When it's same url    or    same structure url for 5 times
+		LinkArray.some(function(v){
+			if(v == url){
+				valid = false;
+				return true;
+			}
+			if( sameURL(v, url) ){
+				i++;
+				if(i>=SAME_COUNT) {
+					valid = false;
 					return true;
-				}else{
-					return false;
 				}
 			}
-			function __validUrl(url){
-				return url.indexOf(host)==0  ;
-			}
-			function __ZZgetUrl(theurl){
-				console.log(theurl);
-				ZZ.ajax({   type: 'GET',   url:theurl,  async:false, 
-					success:function(data){
-						ZZ(data).find('a').each(function(){
-							if( ! __validUrl(this.href) ) return true;
-							__ZZgetUrl( this.href );
-						});
-					},
-					error: function(xhr, type, msg){
-						console.log("error", type,msg);
-					}
-				});
-			}
+		});
+		return valid;
+	}
+
+	var ROOT_URL = window.location.href;
+	var MAX_LEVEL = 1;
+	var SAME_COUNT = 20;
+	var LinkQueue={};
+	var LinkArray=[];
+	var ParsedArray=[];
+
+	function getDepth(parent){
+		var p = parent , level=0;
+		while( p = LinkQueue[p].parent ){
+			level++;
+		}
+		return level;
+	}
+
+	function checkComplete(){
+		console.log( "pending links: ", LinkArray.length - ParsedArray.length );
+		if( LinkArray.length == ParsedArray.length ){
+			console.log("********************** done!!!!!! **************");
+			console.log(_MSGSIGN+'EXIT()');
+		}
+	}
+
+	function getURL(theurl, parent){
 
 
-			ZZ('a').each(function(i,e) {
-				if( ! __validUrl(this.href)  ) return true;
-				__ZZgetUrl( this.href );
+		if( ! validURL(theurl)  ) return false;
+		
+		if( getDepth(parent) >= MAX_LEVEL) return false;
+
+		console.log( theurl, ParsedArray.length, parent, getDepth(parent) );
+
+		LinkArray.push(theurl);
+		LinkQueue[theurl] = {urls: [], parent:parent};
+
+		setTimeout( function(){
+			ZZ.ajax({
+				type: 'GET',   
+				url: theurl, 
+				async: true, 
+				success: function(data){
+					var dom = ZZ( '<div></div>' );
+					dom.html(data);
+					
+					console.log(_MSGSIGN + "url: "+ theurl + "\n, title: " + ZZ("title", dom).text() + "\n\n, email: " + parseHTML( data, theurl ) );
+
+					ZZ("a", dom).each(function(){
+						LinkQueue[theurl].urls.push(this.href);
+						getURL( this.href, theurl );
+					});
+
+				},
+				error: function(xhr, type, msg){
+					ParsedArray.push(theurl);
+					console.log("error", type,msg);
+				},
+				complete: function(xhr, status){
+					checkComplete();
+					console.log("complete", status);
+				}
 			});
+		}, (LinkArray.length-2)*1000);
+	}
+
+	
+	LinkArray.push(ROOT_URL);
+	LinkQueue[ROOT_URL] = {urls: [], parent:null};
+
+	console.log(_MSGSIGN, "email: ", parseHTML( ZZ('body').html(), window.location.href ) );
+
+	ZZ('a').each(function(){ 
+
+		LinkQueue[ROOT_URL].urls.push(this.href);
+
+		getURL( this.href, ROOT_URL);
+	});	
+
+})();
 			
-		}, host );
+		}, host, _MSGSIGN );
 	});
 
 }
 
-crawlerPage("http://cn.bing.com");
+//crawlerPage("http://cn.bing.com");our-locations.html
+//crawlerPage("http://www.topvaluefabrics.com/");
+crawlerPage("http://www.unitedasia.com.cn/");
+
+

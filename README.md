@@ -1,2 +1,2 @@
-# EmailCrawler
+# EmailScanner
 Just for test.
