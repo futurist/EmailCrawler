@@ -210,7 +210,7 @@ function crawlerPage(url){
 		}
 		function getAddress(){
 			if(!text)return "";
-			var re =/(?:address|addr|add)[^\w]*([\w\d-,.#\s]+)/i;
+			var re =/(?:address|addr|add|office)[^\w]*([\w\d-,.#\s]+)/i;
 	        var match = matchAll( text.replace(/\n/ig, " "), re);
 	        var addr = match && match.length>0 ? _.pluck(match,1).join(";") : ""; //
 			return addr;
@@ -352,7 +352,7 @@ function crawlerPage(url){
 }
 
 //crawlerPage("http://cn.bing.com");
-//crawlerPage("http://www.topvaluefabrics.com/our-locations.html");
-crawlerPage("http://www.unitedasia.com.cn/");
+crawlerPage("http://www.topvaluefabrics.com/our-locations.html");
+//crawlerPage("http://www.unitedasia.com.cn/");
 
 
