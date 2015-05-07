@@ -100,6 +100,22 @@ var RES_TIMEOUT = 3000;
 var TRY_COUNT = 3;
 var PageObjs = {};
 var PageArray = [];
+var PagePointer = 0;
+
+var g_inter1 =setInterval(function(){
+	console.log( _.where(PageObjs, {status:"open"}).length, PagePointer, "legth, pointer");
+	if( PagePointer>=PageArray.length){
+		if( _.where(PageObjs, {status:"open"} ).length==0 ){
+			phantom.exit();	
+		}
+		return;
+	}
+	if( _.where(PageObjs, {status:"open"}).length<2 )
+	{
+		crawlerPage(PageArray[PagePointer++]);
+	}
+
+}, 100);
 
 
 
@@ -125,12 +141,12 @@ function crawlerPage(url){
 		PageObjs[url].status = "close";
 		page.stop();
 		page.close();
-		if( !_.findWhere(PageObjs, { status:'open' }) )
-			phantom.exit();
+		if( !_.findWhere(PageObjs, { status:'open' }) ){
+			//phantom.exit();
+		}
 	}
 
 	page.onConsoleMessage=function(data){
-		console.log(data);
 		if( ( new RegExp ("^"+_MSGSIGN) ).test(data) ){
 			var d = (data.split(_MSGSIGN)[1]);
 
@@ -142,6 +158,8 @@ function crawlerPage(url){
 			}
 
 			fs.write( filebase + "_email.txt", d+"\n\n", 'a');
+		}else{
+			console.log(data);
 		}
 	}
 
@@ -196,7 +214,10 @@ function crawlerPage(url){
 
 	function onLoadFinished(status){
 
-			if(status=="fail") return;
+			if(status=="fail"){
+				console.log(page.url, "----FAILED!!---------");
+				return;
+			}
 
 			page.injectJs(  phantom.libraryPath + '/modules/zz.js'  );
 			page.injectJs(  phantom.libraryPath + '/modules/underscore.js'  );
@@ -406,8 +427,19 @@ function crawlerPage(url){
 
 }
 
-//crawlerPage("http://cn.bing.com");
-crawlerPage("http://www.unitedasia.com.cn/");
-crawlerPage("http://www.topvaluefabrics.com/our-locations.html");
+function addPage(url){
+	//if( PageArray.indexOf(url)>-1 )return;
+	PageArray.push(url);
+}
 
+
+addPage("http://cn.bing.com");
+
+addPage('http://www.topvaluefabrics.com/about-us.html');
+
+addPage('http://www.topvaluefabrics.com/activewear-outerwear-fabrics.html');
+addPage("http://www.topvaluefabrics.com/our-locations.html");
+addPage("http://www.topvaluefabrics.com/");
+
+addPage("http://www.unitedasia.com.cn/");
 
