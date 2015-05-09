@@ -94,9 +94,11 @@ function paramToJson(str) {
     }, {});
 }
 
-var DATA_FOLDER = "DATA";
-var _MSGSIGN = "PHANTOMDATA";
-var RES_TIMEOUT = 3000;
+var DATA_FOLDER = "DATA";	// the folder name to save txt and jpg
+var _MSGSIGN = "_PHANTOMDATA";	
+var MAX_LINK = 10;	// max number of pages to crawl, after this, no new page add.
+var RES_TIMEOUT = 10*1000;	//10 sec
+var PAGE_TIMEOUT = 0.5*60*1000;	//180 sec
 var TRY_COUNT = 3;
 var PageObjs = {};
 var PageArray = [];
@@ -105,14 +107,33 @@ var PagePointer = 0;
 function ticker(){
 	var g_inter1 =setInterval(function(){
 		if(PageArray.length==0)return;
-		console.log( "pointer", PagePointer,  _.where(PageObjs, {status:"open"}).map(function(v,i){ return v.url }) );
+
+		var openPage = _.where(PageObjs, {status:"open"});
+
+		openPage = _.filter(openPage, function (v) {
+			var timeout = (new Date() - v.startTime);
+			if(timeout < PAGE_TIMEOUT){
+				return true;
+			}else{
+				v.page.evaluate(function () {
+					__PAGECLOSED=true;
+				});
+				console.log("##### timeout ####",v.url );
+				v.status='close';
+				v.page.stop();
+				v.page.close();
+			}
+		});
+
+		console.log( "pointer", PagePointer,  openPage.map(function(v,i){ return v.url }) );
+		
 		if( PagePointer>=PageArray.length){
-			if(PagePointer>0 && _.where(PageObjs, {status:"open"} ).length==0 ){
+			if(PagePointer>0 && openPage.length==0 ){
 				phantom.exit();	
 			}
 			return;
 		}
-		if( _.where(PageObjs, {status:"open"}).length<2 )
+		if( openPage.length<2 )
 		{
 			crawlerPage( PageArray[PagePointer++].url );
 		}
@@ -130,13 +151,14 @@ function crawlerPage(url) {
 	var host = urlObj.base;
 	var filebase = DATA_FOLDER + "/" + host.split("//")[1].split("/")[0];
 
-	PageObjs[url] = { status:"open", url:url, tryCount:0 };
 
 	var page = require('webpage').create();
 	page.settings.userAgent = 'Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.57 Safari/537.36';
 	page.settings.resourceTimeout = RES_TIMEOUT;
 
 	page.viewportSize = { width:1000, height:800 };
+
+	PageObjs[url] = { status:"open", url:url, tryCount:0, startTime: new Date(), page:page };
 
 
 	function EXIT(){
@@ -146,6 +168,18 @@ function crawlerPage(url) {
 		if( !_.findWhere(PageObjs, { status:'open' }) ){
 			//phantom.exit();
 		}
+	}
+
+	function renderPage (filepath) {
+		page.evaluate(function() {
+			var head = document.querySelector('head');
+			  style = document.createElement('style');
+			  text = document.createTextNode('body { background: #fff }');
+			style.setAttribute('type', 'text/css');
+			style.appendChild(text);
+			head.insertBefore(style, head.firstChild);
+		});
+		page.render( filepath+".jpg", {format:'jpeg', quality:'80' });
 	}
 
 	page.onConsoleMessage=function(data){
@@ -221,9 +255,12 @@ function crawlerPage(url) {
 
 			fs.write( filebase + "_email.txt", "", 'w');
 			fs.write( filebase + "_html.txt", page.content, 'w');
-			page.render( filebase+".jpg", {format:'jpeg', quality:'80' });
 
-			var c = page.evaluate( function(host, _MSGSIGN) {
+			renderPage( filebase );
+
+			var c = page.evaluate( function(host, HTML, _MSGSIGN) {
+
+	__PAGECLOSED = false;
 
 	(function (){
 
@@ -326,8 +363,10 @@ function crawlerPage(url) {
 		}
 
 		var ROOT_URL = window.location.href;
-		var MAX_LEVEL = 1;
-		var SAME_COUNT = 20;
+		var MAX_LEVEL = 1;	// max level of page to crawl
+		var SAME_COUNT = 20; // same structure URL
+		var MAX_HREF = 3; // skip the max link of page, and continue
+
 		var LinkQueue={};
 		var LinkArray=[];
 		var ParsedArray=[];
@@ -351,7 +390,7 @@ function crawlerPage(url) {
 		function getURL(theurl, parent){
 
 
-			if( ! validURL(theurl)  ) {
+			if( ! validURL(theurl) || __PAGECLOSED  ) {
 				return false;
 			}
 			if( getDepth(parent) >= MAX_LEVEL) return false;
@@ -377,18 +416,22 @@ function crawlerPage(url) {
 							"contact": parseHTML( data, ZZ("body", dom).text(), theurl )
 						});
 
-						ZZ("a", dom).each(function(){
-							LinkQueue[theurl].urls.push(this.href);
-							getURL( this.href, theurl );
-						});
+						if( ZZ("a", dom).size() > MAX_HREF ){
+							ZZ("a", dom).each(function(){
+								LinkQueue[theurl].urls.push(this.href);
+								getURL( this.href, theurl );
+							});
+						}
+
+						checkComplete();
 
 					},
 					error: function(xhr, type, msg){
 						ParsedArray.push(theurl);
 						console.log("error", type,msg);
+						checkComplete();
 					},
 					complete: function(xhr, status){
-						checkComplete();
 						console.log("complete", status);
 					}
 				});
@@ -400,6 +443,14 @@ function crawlerPage(url) {
 		LinkQueue[ROOT_URL] = {urls: [], parent:null};
 
 		var pageHtml = ZZ('body').html();
+
+		var contact = parseHTML( pageHtml, pageText, window.location.href );
+
+		if(!pageHtml || ZZ('a').size()==0 || ZZ('a').size()>MAX_HREF ){
+			checkComplete();
+			return;
+		}
+
 		var dom = ZZ( '<div></div>' );
 		dom.html( pageHtml.replace(/<br>|<br\s*\/>/ig, "&nbsp;") );
 		ZZ('script,style', dom).remove();
@@ -409,13 +460,10 @@ function crawlerPage(url) {
 			"cmd": "contactData",
 			"url": ROOT_URL,
 			"title": document.title,
-			"contact": parseHTML( pageHtml, pageText, window.location.href )
+			"contact": contact
 		});
 
-		if(ZZ('a').size()==0){
-			checkComplete();
-			return;
-		}
+		
 
 		ZZ('a').each(function(){ 
 
@@ -429,7 +477,7 @@ function crawlerPage(url) {
 		
 	})();
 				
-			}, host, _MSGSIGN );
+			}, host, page.content, _MSGSIGN );
 	}
 
 
@@ -438,6 +486,7 @@ function crawlerPage(url) {
 }
 
 function addPage(url, source){
+	if( PageArray.length > MAX_LINK) return;
 	if( _.findWhere( PageArray, {url:url} ) ) return;
 	PageArray.push({ url: url, source: source ? source : "" } );
 }
@@ -484,13 +533,20 @@ function getSearchResult( CONFIG, keyword ){
 	page.onConsoleMessage=function(data){
 		if( ( new RegExp ("^"+_MSGSIGN) ).test(data) ){
 			var d = JSON.parse(data.split(_MSGSIGN)[1]);
-			if(d.cmd=='hrefList'){
+			if(d.cmd=='hrefData'){
 				console.log(d.data);
 				console.log(d.next);
 
 				d.data.forEach(function(v){
 					addPage(v, name);
 				});
+
+				if( PageArray.length > MAX_LINK) return;
+
+				CONFIG.url = d.next;
+				setTimeout(function () {
+					getSearchResult(CONFIG, keyword);
+				}, 1000 );
 
 				fs.write( filebase + "_result.txt", d.data +"\n\n", 'a');
 			}
@@ -550,9 +606,9 @@ function getSearchResult( CONFIG, keyword ){
 			function getResult(){
 				console.log(result);
 				var nodes = document.querySelectorAll(result);
-				var hrefList = Array.prototype.map.call(nodes, function(a, i) { return a.href  });
+				var hrefData = Array.prototype.map.call(nodes, function(a, i) { return a.href  });
 				var n = document.querySelector(nextSel);
-				sendMSG({cmd:"hrefList", data:hrefList, next: n? n.href : ""  } );
+				sendMSG({cmd:"hrefData", data:hrefData, next: n? n.href : ""  } );
 				sendMSG({cmd:"exit"});
 			}
 
@@ -574,15 +630,13 @@ function getSearchResult( CONFIG, keyword ){
 var SearchConfig = [
 	{
 		name:"Bing Global", 
-		//url: 'https://www.google.com/search?q=%s',
 		url: 'http://global.bing.com/search?q=%s&setmkt=en-us&setlang=en-us',
 		condition: 'document.querySelectorAll("#b_results li.b_algo").length>1 ',
 		result: '#b_results li.b_algo>h2>a',
-		next: 'nav .sb_pagF li:last-child a'
+		next: '#b_results .b_pag nav li:last-child a'
 	},
 	{
 		name:"google", 
-		//url: 'https://www.google.com/search?q=%s',
 		url: 'https://www.google.com/search?q=%s&qscrl=1&ncr&hl=en',
 		condition: 'document.querySelectorAll("li.g h3.r") && document.querySelectorAll("li.g h3.r").length>1 && document.querySelectorAll("li.g h3.r a.passed").length==0 ',
 		result: 'li.g h3.r a'
