@@ -94,7 +94,7 @@ function paramToJson(str) {
     }, {});
 }
 
-
+var DATA_FOLDER = "DATA";
 var _MSGSIGN = "PHANTOMDATA";
 var RES_TIMEOUT = 3000;
 var TRY_COUNT = 3;
@@ -102,33 +102,35 @@ var PageObjs = {};
 var PageArray = [];
 var PagePointer = 0;
 
-var g_inter1 =setInterval(function(){
-	console.log( _.where(PageObjs, {status:"open"}).length, PagePointer, "legth, pointer");
-	if( PagePointer>=PageArray.length){
-		if( _.where(PageObjs, {status:"open"} ).length==0 ){
-			phantom.exit();	
+function ticker(){
+	var g_inter1 =setInterval(function(){
+		if(PageArray.length==0)return;
+		console.log( "pointer", PagePointer,  _.where(PageObjs, {status:"open"}).map(function(v,i){ return v.url }) );
+		if( PagePointer>=PageArray.length){
+			if(PagePointer>0 && _.where(PageObjs, {status:"open"} ).length==0 ){
+				phantom.exit();	
+			}
+			return;
 		}
-		return;
-	}
-	if( _.where(PageObjs, {status:"open"}).length<2 )
-	{
-		crawlerPage(PageArray[PagePointer++]);
-	}
+		if( _.where(PageObjs, {status:"open"}).length<2 )
+		{
+			crawlerPage( PageArray[PagePointer++].url );
+		}
 
-}, 100);
-
-
+	}, 1000);
+}
+ticker();
 
 
+function crawlerPage(url) {
 
-function crawlerPage(url){
+	if( PageObjs[url] ) return;
 
-	
 	var urlObj= parseUrl(url);
 	var host = urlObj.base;
-	var filebase = host.split("//")[1].split("/")[0];
+	var filebase = DATA_FOLDER + "/" + host.split("//")[1].split("/")[0];
 
-	PageObjs[url] = { status:"open", tryCount:0 };
+	PageObjs[url] = { status:"open", url:url, tryCount:0 };
 
 	var page = require('webpage').create();
 	page.settings.userAgent = 'Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.57 Safari/537.36';
@@ -148,35 +150,26 @@ function crawlerPage(url){
 
 	page.onConsoleMessage=function(data){
 		if( ( new RegExp ("^"+_MSGSIGN) ).test(data) ){
-			var d = (data.split(_MSGSIGN)[1]);
+			var d = JSON.parse(data.split(_MSGSIGN)[1]);
 
-			if(d=="EXIT()"){
+			if(d.cmd=="contactData"){
+				console.log(d.url);
+				console.log(d.title);
+				console.log(d.contact);
+				fs.write( filebase + "_email.txt", JSON.stringify(d) +"\n\n", 'a');
+			}
+			if(d.cmd=="EXIT"){
 				setTimeout(function(){ 
 					EXIT();
 				 }, 1000);
 				return;
 			}
 
-			fs.write( filebase + "_email.txt", d+"\n\n", 'a');
 		}else{
 			console.log(data);
 		}
 	}
 
-
-	page.onError = function(msg, trace) {
-
-	  var msgStack = ['ERROR: ' + msg];
-
-	  if (trace && trace.length) {
-		msgStack.push('TRACE:');
-		trace.forEach(function(t) {
-		  msgStack.push(' -> ' + t.file + ': ' + t.line + (t.function ? ' (in function "' + t.function +'")' : ''));
-		});
-	  }
-
-	  console.error(msgStack.join('\n'));
-	};
 
 	page.onResourceRequested = function(data, req) {
 		return;
@@ -189,23 +182,17 @@ function crawlerPage(url){
 
 
 	page.onResourceTimeout = function(request) {
-	    console.log('Response (#' + request.id + '): ' + JSON.stringify(request));
+	    //console.log('Response (#' + request.id + '): ' + JSON.stringify(request));
 	};
 
 	page.onResourceError = function(resErr) {
+		if( /Operation canceled/i.test(resErr.errorString) ) return;
 		console.log('Unable to load resource (#' + resErr.id + 'URL:' + resErr.url + ')');
 		console.log('Error code: ' + resErr.errorCode + '. Description: ' + resErr.errorString);
 		//Error code: 99. Description: Connection timed out
 
 		if(resErr.url==url){	//The main url, when timeout or error
-			//page.stop();
-			var t = PageObjs[url].tryCount++;
-			if(t<TRY_COUNT){
-				console.log(url, "Timeout, try: ", t);
-				page.open(url);
-			} else {
-				EXIT();
-			}	
+			
 		}
 	};
 	
@@ -216,6 +203,16 @@ function crawlerPage(url){
 
 			if(status=="fail"){
 				console.log(page.url, "----FAILED!!---------");
+				
+				page.stop();
+				var t = PageObjs[url].tryCount++;
+				if(t<TRY_COUNT){
+					console.log(url, "Timeout, try: ", t);
+					page.open(url);
+				} else {
+					EXIT();
+				}	
+
 				return;
 			}
 
@@ -224,12 +221,15 @@ function crawlerPage(url){
 
 			fs.write( filebase + "_email.txt", "", 'w');
 			fs.write( filebase + "_html.txt", page.content, 'w');
-			page.render( filebase+".png");
+			page.render( filebase+".jpg", {format:'jpeg', quality:'80' });
 
 			var c = page.evaluate( function(host, _MSGSIGN) {
 
 	(function (){
 
+		function sendMSG(json){
+			console.log(_MSGSIGN, JSON.stringify(json));
+		}
 
 		function matchAll(str, re) {
 		  var m, matches = [];
@@ -344,7 +344,7 @@ function crawlerPage(url){
 			console.log( host, "pending links: ", LinkArray.length - ParsedArray.length );
 			if( LinkArray.length == ParsedArray.length ){
 				console.log(host, "********************** done!!!!!! **************");
-				console.log(_MSGSIGN+'EXIT()');
+				sendMSG( {cmd:"EXIT"} );
 			}
 		}
 
@@ -356,7 +356,7 @@ function crawlerPage(url){
 			}
 			if( getDepth(parent) >= MAX_LEVEL) return false;
 
-			console.log( theurl, ParsedArray.length, parent, getDepth(parent) );
+			//console.log( theurl, ParsedArray.length, parent, getDepth(parent) );
 
 			LinkArray.push(theurl);
 			LinkQueue[theurl] = {urls: [], parent:parent};
@@ -370,7 +370,12 @@ function crawlerPage(url){
 						var dom = ZZ( '<div></div>' );
 						dom.html(data);
 						
-						console.log(_MSGSIGN + "url: "+ theurl + "\n, title: " + ZZ("title", dom).text() + "\n\n, email: " + parseHTML( data, ZZ("body", dom).text(), theurl ) );
+						sendMSG({
+							"cmd": "contactData",
+							"url": theurl,
+							"title": ZZ("title", dom).text(),
+							"contact": parseHTML( data, ZZ("body", dom).text(), theurl )
+						});
 
 						ZZ("a", dom).each(function(){
 							LinkQueue[theurl].urls.push(this.href);
@@ -400,7 +405,12 @@ function crawlerPage(url){
 		ZZ('script,style', dom).remove();
 		var pageText = ZZ(dom).text();
 
-		console.log(_MSGSIGN, "email: ", parseHTML( pageHtml, pageText, window.location.href ) );
+		sendMSG({
+			"cmd": "contactData",
+			"url": ROOT_URL,
+			"title": document.title,
+			"contact": parseHTML( pageHtml, pageText, window.location.href )
+		});
 
 		if(ZZ('a').size()==0){
 			checkComplete();
@@ -427,12 +437,162 @@ function crawlerPage(url){
 
 }
 
-function addPage(url){
-	//if( PageArray.indexOf(url)>-1 )return;
-	PageArray.push(url);
+function addPage(url, source){
+	if( _.findWhere( PageArray, {url:url} ) ) return;
+	PageArray.push({ url: url, source: source ? source : "" } );
 }
 
 
+
+function getSearchResult( CONFIG, keyword ){
+
+	var name=CONFIG.name;
+	var url= keyword ? CONFIG.url.replace(/%s/g, encodeURIComponent(keyword)) : CONFIG.url ;
+	var condition=CONFIG.condition;
+	var result=CONFIG.result;
+	var nextSel=CONFIG.next;
+	
+	var urlObj= parseUrl(url);
+	var host = urlObj.base;
+	var filebase = DATA_FOLDER + "/" + host.split("//")[1].split("/")[0]+'_'+urlObj.query;
+
+	var page = require('webpage').create();
+	page.settings.userAgent = 'Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.57 Safari/537.36';
+	page.settings.resourceTimeout = 150000;
+	page.viewportSize = { width:1000, height:800 };
+
+
+
+	page.onResourceRequested = function(data, req) {
+	    //console.log('Request (*' + data.id + '): ', data.method, data.url);
+	};
+
+
+	page.onResourceTimeout = function(request) {
+	    console.log('Response (#' + request.id + '): ' + JSON.stringify(request));
+	};
+
+	page.onResourceError = function(resErr) {
+		if( /Operation canceled/i.test(resErr.errorString) ) return;
+		console.log('Unable to load resource (#' + resErr.id + 'URL:' + resErr.url + ')');
+		console.log('Error code: ' + resErr.errorCode + '. Description: ' + resErr.errorString);
+		//Error code: 99. Description: Connection timed out
+	};
+	
+
+
+	page.onConsoleMessage=function(data){
+		if( ( new RegExp ("^"+_MSGSIGN) ).test(data) ){
+			var d = JSON.parse(data.split(_MSGSIGN)[1]);
+			if(d.cmd=='hrefList'){
+				console.log(d.data);
+				console.log(d.next);
+
+				d.data.forEach(function(v){
+					addPage(v, name);
+				});
+
+				fs.write( filebase + "_result.txt", d.data +"\n\n", 'a');
+			}
+			if(d.cmd=='exit'){
+				console.log("href got, page stop");
+				page.stop();
+				page.close();
+			}
+			
+
+		}else{
+			console.log(data);
+		}
+	}
+
+	page.onLoadFinished =  function(status){
+		console.log(status );
+		if(status=='fail'){
+			setTimeout( function(){
+				page.open(url);
+			},1000);
+			return;
+		}
+		var c = page.evaluate( function(name, condition, result, nextSel, _MSGSIGN) {
+
+			(function (){
+
+			var inter1, failedCount=0;
+			function wait(condition, passfunc, failfunc){
+			    var _inter = setInterval(function(){
+			        if( eval(condition) ){
+			            clearInterval(_inter);
+			            passfunc.call();
+			        }else{
+			            if(failfunc) failfunc.call();
+			        }
+			    },300);
+			    return _inter;
+			}
+
+			function waitForContent( condition ) {
+			    clearInterval(inter1);
+
+			    inter1 = wait( condition,  getResult, function(){
+			        return;
+			        failedCount++; 
+			        if(failedCount>100 ){  // && $(".med.card-section").size()==0
+			            clearInterval(inter1);
+			            window.location.reload();
+			        }
+			    });
+			}
+
+			function sendMSG(json){
+				console.log(_MSGSIGN, JSON.stringify(json));
+			}
+			function getResult(){
+				console.log(result);
+				var nodes = document.querySelectorAll(result);
+				var hrefList = Array.prototype.map.call(nodes, function(a, i) { return a.href  });
+				var n = document.querySelector(nextSel);
+				sendMSG({cmd:"hrefList", data:hrefList, next: n? n.href : ""  } );
+				sendMSG({cmd:"exit"});
+			}
+
+			waitForContent(condition);
+
+
+			})();
+
+	}, name, condition, result, nextSel, _MSGSIGN);
+
+	};
+	//end of onLoadFinished
+
+	page.open(url);
+}
+//end of getSearchResult
+
+
+var SearchConfig = [
+	{
+		name:"Bing Global", 
+		//url: 'https://www.google.com/search?q=%s',
+		url: 'http://global.bing.com/search?q=%s&setmkt=en-us&setlang=en-us',
+		condition: 'document.querySelectorAll("#b_results li.b_algo").length>1 ',
+		result: '#b_results li.b_algo>h2>a',
+		next: 'nav .sb_pagF li:last-child a'
+	},
+	{
+		name:"google", 
+		//url: 'https://www.google.com/search?q=%s',
+		url: 'https://www.google.com/search?q=%s&qscrl=1&ncr&hl=en',
+		condition: 'document.querySelectorAll("li.g h3.r") && document.querySelectorAll("li.g h3.r").length>1 && document.querySelectorAll("li.g h3.r a.passed").length==0 ',
+		result: 'li.g h3.r a'
+	}
+]
+
+getSearchResult( SearchConfig[0], "polyester fabric" );
+
+
+/*
 addPage("http://cn.bing.com");
 
 addPage('http://www.topvaluefabrics.com/about-us.html');
@@ -442,4 +602,5 @@ addPage("http://www.topvaluefabrics.com/our-locations.html");
 addPage("http://www.topvaluefabrics.com/");
 
 addPage("http://www.unitedasia.com.cn/");
+*/
 

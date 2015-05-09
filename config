@@ -10,7 +10,7 @@
 	"sslProtocol": "any",
 	"maxDiskCacheSize": 100000,
 	"outputEncoding": "utf8",
-	"proxyType": "none",
+	"proxy": "127.0.0.1:8087",
 	"remoteDebuggerPort" : 9000
 
 }

@@ -6,3 +6,5 @@
 *.html
 *.htm
 cookies.*
+DATA/
+data/
