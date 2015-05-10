@@ -636,14 +636,15 @@ var SearchConfig = [
 		next: '#b_results .b_pag nav li:last-child a'
 	},
 	{
-		name:"google", 
+		name:"Google Global", 
 		url: 'https://www.google.com/search?q=%s&qscrl=1&ncr&hl=en',
 		condition: 'document.querySelectorAll("li.g h3.r") && document.querySelectorAll("li.g h3.r").length>1 && document.querySelectorAll("li.g h3.r a.passed").length==0 ',
-		result: 'li.g h3.r a'
+		result: 'li.g h3.r a',
+		next: '#pnnext'
 	}
 ]
 
-getSearchResult( SearchConfig[0], "polyester fabric" );
+getSearchResult( SearchConfig[1], "polyester fabric" );
 
 
 /*
