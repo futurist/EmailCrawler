@@ -490,16 +490,14 @@ function addPage(url, source){
 	if( _.findWhere( PageArray, {url:url} ) ) return;
 	PageArray.push({ url: url, source: source ? source : "" } );
 }
-
+function DB_MSG(json){
+	console.log(_MSGSIGN, JSON.stringify(json));
+}
 
 
 function getSearchResult( CONFIG, keyword ){
 
-	var name=CONFIG.name;
 	var url= keyword ? CONFIG.url.replace(/%s/g, encodeURIComponent(keyword)) : CONFIG.url ;
-	var condition=CONFIG.condition;
-	var result=CONFIG.result;
-	var nextSel=CONFIG.next;
 	
 	var urlObj= parseUrl(url);
 	var host = urlObj.base;
@@ -538,12 +536,14 @@ function getSearchResult( CONFIG, keyword ){
 				console.log(d.next);
 
 				d.data.forEach(function(v){
-					addPage(v, name);
+					addPage(v, CONFIG.name);
 				});
 
-				if( PageArray.length > MAX_LINK) return;
+				if( !d.next || PageArray.length > MAX_LINK) return;
 
 				CONFIG.url = d.next;
+				CONFIG.page++;
+				
 				setTimeout(function () {
 					getSearchResult(CONFIG, keyword);
 				}, 1000 );
@@ -570,11 +570,14 @@ function getSearchResult( CONFIG, keyword ){
 			},1000);
 			return;
 		}
-		var c = page.evaluate( function(name, condition, result, nextSel, _MSGSIGN) {
+		var c = page.evaluate( function(CONFIG, _MSGSIGN) {
 
 			(function (){
 
 			var inter1, failedCount=0;
+			function trim(str){
+				return str.replace(/^\s+|\s+$/g, "");
+			}
 			function wait(condition, passfunc, failfunc){
 			    var _inter = setInterval(function(){
 			        if( eval(condition) ){
@@ -587,10 +590,10 @@ function getSearchResult( CONFIG, keyword ){
 			    return _inter;
 			}
 
-			function waitForContent( condition ) {
+			function waitForContent(  ) {
 			    clearInterval(inter1);
 
-			    inter1 = wait( condition,  getResult, function(){
+			    inter1 = wait( CONFIG.condition,  getResult, function(){
 			        return;
 			        failedCount++; 
 			        if(failedCount>100 ){  // && $(".med.card-section").size()==0
@@ -604,20 +607,36 @@ function getSearchResult( CONFIG, keyword ){
 				console.log(_MSGSIGN, JSON.stringify(json));
 			}
 			function getResult(){
-				console.log(result);
-				var nodes = document.querySelectorAll(result);
-				var hrefData = Array.prototype.map.call(nodes, function(a, i) { return a.href  });
-				var n = document.querySelector(nextSel);
+				var items = document.querySelectorAll( CONFIG.item );
+				var jsonA = [];
+				items.forEach(function(v, i){
+					var href = v.querySelector(CONFIG.href);
+					var title = v.querySelector(CONFIG.title);
+					var desc = v.querySelector(CONFIG.desc);
+					var date = v.querySelector('.b_attribution').lastChild;
+					date = date.nodeType==3 ? trim(date.textContent) : "";
+					jsonA.push( {
+						"href": href,
+						"title": title,
+						"desc": desc,
+						"date": date
+					});
+				});
+				var hrefData = Array.prototype.map.call(jsonA, function(a, i) { return a.href  });
+				var n = document.querySelector(CONFIG.next);
+				
+				DB_MSG( {type:"search_result", config: CONFIG, result: jsonA } );
+
 				sendMSG({cmd:"hrefData", data:hrefData, next: n? n.href : ""  } );
 				sendMSG({cmd:"exit"});
 			}
 
-			waitForContent(condition);
+			waitForContent();
 
 
 			})();
 
-	}, name, condition, result, nextSel, _MSGSIGN);
+	}, CONFIG, _MSGSIGN);
 
 	};
 	//end of onLoadFinished
@@ -632,7 +651,20 @@ var SearchConfig = [
 		name:"Bing Global", 
 		url: 'http://global.bing.com/search?q=%s&setmkt=en-us&setlang=en-us',
 		condition: 'document.querySelectorAll("#b_results li.b_algo").length>1 ',
-		result: '#b_results li.b_algo>h2>a',
+		item: '#b_results li.b_algo',
+		href: 'h2>a',
+		title: 'h2>a',
+		desc: '.b_caption>p',
+		company: '',
+		email:'',
+		phone:'',
+		fax:'',
+		address:'',
+		domain:'',
+		age:'',
+		prestige:'',
+		location:'',
+		page: 0,
 		next: '#b_results .b_pag nav li:last-child a'
 	},
 	{
@@ -640,11 +672,12 @@ var SearchConfig = [
 		url: 'https://www.google.com/search?q=%s&qscrl=1&ncr&hl=en',
 		condition: 'document.querySelectorAll("li.g h3.r") && document.querySelectorAll("li.g h3.r").length>1 && document.querySelectorAll("li.g h3.r a.passed").length==0 ',
 		result: 'li.g h3.r a',
+		page: 0,
 		next: '#pnnext'
 	}
 ]
 
-getSearchResult( SearchConfig[1], "polyester fabric" );
+getSearchResult( SearchConfig[0], "polyester fabric" );
 
 
 /*
