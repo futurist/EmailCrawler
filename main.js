@@ -19,7 +19,35 @@ var _ = require('./modules/underscore');
 
 var spawn = proc.spawn;
 var execFile = proc.execFile;
+var ws;
 
+if( sys.args.indexOf('nows')>-1 ){
+
+	setTimeout(init, 500);
+
+}else{
+
+	ws = new WebSocket('ws://localhost:81');
+	ws.onopen = function (e) {
+		ws.onmessage = function (msg) {
+			console.log(msg.data);
+		}
+		ws.onclose = function (code, reason, bClean) {
+			console.log("ws error: ", code, reason);
+			phantom.exit();
+		}
+		init();
+	}
+
+}
+
+function wsend(json, callback){
+	if(ws){
+		ws.send(JSON.stringify(json));
+	}else{
+		console.log(_DBSIGN, JSON.stringify(json) );
+	}
+}
 
 function parseUrl( url ){
 	var bare = url.split('#')[0].split('?')[0];
@@ -96,9 +124,10 @@ function paramToJson(str) {
 
 var DATA_FOLDER = "DATA";	// the folder name to save txt and jpg
 var _MSGSIGN = "_PHANTOMDATA";	
+var _DBSIGN = "_MONGODATA";	
 var MAX_LINK = 10;	// max number of pages to crawl, after this, no new page add.
-var RES_TIMEOUT = 10*1000;	//10 sec
-var PAGE_TIMEOUT = 0.5*60*1000;	//180 sec
+var RES_TIMEOUT = 10*3000;	//10 sec
+var PAGE_TIMEOUT = 1*60*1000;	//1 min
 var TRY_COUNT = 3;
 var PageObjs = {};
 var PageArray = [];
@@ -124,9 +153,7 @@ function ticker(){
 				v.page.close();
 			}
 		});
-
-		console.log( "pointer", PagePointer,  openPage.map(function(v,i){ return v.url }) );
-		
+	
 		if( PagePointer>=PageArray.length){
 			if(PagePointer>0 && openPage.length==0 ){
 				phantom.exit();	
@@ -135,7 +162,9 @@ function ticker(){
 		}
 		if( openPage.length<2 )
 		{
-			crawlerPage( PageArray[PagePointer++].url );
+			var p = PageArray[PagePointer++];
+			crawlerPage( p.url, p.config );
+			console.log( "pointer", PagePointer,  openPage.map(function(v,i){ return v.url }) );
 		}
 
 	}, 1000);
@@ -143,14 +172,15 @@ function ticker(){
 ticker();
 
 
-function crawlerPage(url) {
+function crawlerPage(url, config) {
 
 	if( PageObjs[url] ) return;
 
 	var urlObj= parseUrl(url);
 	var host = urlObj.base;
-	var filebase = DATA_FOLDER + "/" + host.split("//")[1].split("/")[0];
-
+	var domain = host.split("//")[1].split("/")[0];
+	var filebase = DATA_FOLDER + "/" + domain;
+	var DateSign;
 
 	var page = require('webpage').create();
 	page.settings.userAgent = 'Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.57 Safari/537.36';
@@ -160,8 +190,8 @@ function crawlerPage(url) {
 
 	PageObjs[url] = { status:"open", url:url, tryCount:0, startTime: new Date(), page:page };
 
-
 	function EXIT(){
+		if(DateSign) wsend({ type:"page_close", date:DateSign, url: url });
 		PageObjs[url].status = "close";
 		page.stop();
 		page.close();
@@ -179,20 +209,26 @@ function crawlerPage(url) {
 			style.appendChild(text);
 			head.insertBefore(style, head.firstChild);
 		});
-		page.render( filepath+".jpg", {format:'jpeg', quality:'80' });
+		page.render( DATA_FOLDER + "/" + filepath+".jpg", {format:'jpeg', quality:'80' });
 	}
 
 	page.onConsoleMessage=function(data){
+		if( ( new RegExp ("^"+_DBSIGN) ).test(data) ){
+			var d = JSON.parse(data.split(_DBSIGN)[1]);
+			wsend(d);
+		}
+
 		if( ( new RegExp ("^"+_MSGSIGN) ).test(data) ){
+
 			var d = JSON.parse(data.split(_MSGSIGN)[1]);
 
 			if(d.cmd=="contactData"){
-				console.log(d.url);
-				console.log(d.title);
-				console.log(d.contact);
+				// console.log(d.url);
+				// console.log(d.title);
+				// console.log(d.contact);
 				fs.write( filebase + "_email.txt", JSON.stringify(d) +"\n\n", 'a');
 			}
-			if(d.cmd=="EXIT"){
+			if(d.cmd=="EXIT") {
 				setTimeout(function(){ 
 					EXIT();
 				 }, 1000);
@@ -200,7 +236,7 @@ function crawlerPage(url) {
 			}
 
 		}else{
-			console.log(data);
+			console.log(data);		
 		}
 	}
 
@@ -230,7 +266,7 @@ function crawlerPage(url) {
 		}
 	};
 	
-	
+
 	page.onLoadFinished = onLoadFinished;
 
 	function onLoadFinished(status){
@@ -256,17 +292,27 @@ function crawlerPage(url) {
 			fs.write( filebase + "_email.txt", "", 'w');
 			fs.write( filebase + "_html.txt", page.content, 'w');
 
-			renderPage( filebase );
 
-			var c = page.evaluate( function(host, HTML, _MSGSIGN) {
+			DateSign = +new Date();
+
+			var snapName = domain + "_" + DateSign;
+			renderPage( snapName );
+
+			DateSign += Math.random();
+
+
+			var c = page.evaluate( function(host, HTML, snapName, config, DateSign, _MSGSIGN, _DBSIGN) {
 
 	__PAGECLOSED = false;
 
 	(function (){
-
 		function sendMSG(json){
 			console.log(_MSGSIGN, JSON.stringify(json));
 		}
+		function DB_MSG(json){
+			console.log(_DBSIGN, JSON.stringify(json));
+		}
+		
 
 		function matchAll(str, re) {
 		  var m, matches = [];
@@ -287,30 +333,113 @@ function crawlerPage(url) {
 				return email;
 			}
 			function getPhone(){
-				if(!html)return "";
-				var re =/\+?\(?[\+0-9. \n\(\)-]{3,8}\)?[0-9. \n\(\)-]{2,14}\d(?:\s*-\s*[0-9]+)?/ig;
-		        var match = html.replace(/&nbsp;/ig," ").replace(/\n|<br>|<\/br>/ig,"").match(re);
-		        phone = match ? _.uniq( match.filter( function(v,i){ v=ZZ.trim(v); var dot=v.match(/([\d]\.[\d])/ig); if(dot==null || dot.length>1) if( v.length>9 && /[\) \n-.]+/.test(v) && /^[+0\(\d]/.test(v) )  return true; }) ).join(";") : ""; //
+				if(!text)return "";
+				var re =/\+?\(?[\+0-9. \n\(\)-]{3,8}\)?[0-9. \n\(\)-]{2,14}\d(?:\s*-\s*[0-9]+)?/gi;
+				var searchStr = text.replace(/\n/ig, " ").replace(/\xa0/ig,' ').replace(/\s+/g,' ');
+				//var searchStr = html.replace(/&nbsp;/ig," ").replace(/\n|<br\s*>|<br\s*\/>/ig,"");
+		        var matchA = [];
+
+				var lastPos = 0;				
+				while ( match=re.exec(searchStr) ) {
+				  var v= match[0];
+				  v = ZZ.trim(v); var dot=v.match(/([\d]\.[\d])/ig); 
+				  
+				  var pos=match.index;
+
+				  if( pos>0 && searchStr[pos-1].match(/[\d\w]/i) ) continue;
+				  //if( ! searchStr.substring(lastPos, pos).match(/phone|contact|reach|number|mobile|link|talk|touch|电话|手机|联系|我们/i) ) continue;
+				  lastPos = re.lastIndex;
+
+  				  if( /^(19|20)\d{2}[^d]|[^\d](19|20)\d{2}$|[^\d](19|20)\d{2}[^\d]/.test(v) ) continue;
+
+				  var m=v.match(/\d+/g);
+				  if(  
+				  	m.filter(function(v){ return v.length<4 }).length>2 || 
+				  	m.filter(function(v,i){ return v.length<3 && i>1 && i<m.length } ).length>0 ||
+				  	( dot && dot.length>1 && v.match(/-/) )
+				  ) continue;
+
+				  if(dot==null || dot.length>1)
+				  	if( v.length>9 && /[\) \n-.]+/.test(v) && /^[+0\(\d]/.test(v) && !/[^\d]+\d{1,2}-\d{1,2}$/.test(v) ){
+				  		matchA.push(v);
+				  	}
+				}
+
+		        phone = matchA.length ? _.uniq( matchA ).join(";") : ""; //
 				return phone;
 			}
 			function getFax(){
 				if(!text)return "";
-				var re =/fax[^\d+\(]*(\+?\(?[\+0-9. \n\(\)-]{3,8}\)?[0-9. \n\(\)-]{2,14}\d(?:\s*-\s*[0-9]+)?)/i;
-		        var match = matchAll( text.replace(/\n/ig, " "), re);
-		        var fax = match && match.length>0 ? _.pluck(match,1).join(";") : ""; //
+				var re =/\+?\(?[\+0-9. \n\(\)-]{3,8}\)?[0-9. \n\(\)-]{2,14}\d(?:\s*-\s*[0-9]+)?/gi;
+				
+				var searchStr = text.replace(/\n/ig, " ").replace(/\xa0/ig,' ').replace(/\s+/g,' ');
+		        var matchA = [];
+				
+				var lastPos = 0;
+				while ( match=re.exec(searchStr) ) {
+				  var v= match[0];
+				  v = ZZ.trim(v); var dot=v.match(/([\d]\.[\d])/ig); 
+
+				  var pos=match.index;
+
+				  if( pos>0 && searchStr[pos-1].match(/[\d\w]/i) ) continue;
+				  if( ! searchStr.substring(lastPos, pos).match(/fax|传真/i) ) continue;
+				  lastPos = re.lastIndex;
+				  
+  				  if( /^(19|20)\d{2}[^d]|[^\d](19|20)\d{2}$|[^\d](19|20)\d{2}[^\d]/.test(v) ) continue;
+
+				  var m=v.match(/\d+/g);
+				  if(  
+				  	m.filter(function(v){ return v.length<4 }).length>2 || 
+				  	m.filter(function(v,i){ return v.length<3 && i>1 && i<m.length } ).length>0 ||
+				  	( dot && dot.length>1 && v.match(/-/) )
+				  ) continue;
+
+				  if(dot==null || dot.length>1)
+				  	if( v.length>9 && /[\) \n-.]+/.test(v) && /^[+0\(\d]/.test(v) && !/\d{2,4}-\d{1,2}-\d{1,2}/.test(v) ){
+				  		matchA.push(v.replace(/\xa0/g, '').replace(/\s+/g,'') );
+				  	}
+				}
+
+		        fax = matchA.length ? _.uniq( matchA ).join(";") : ""; //
 				return fax;
 			}
 			function getAddress(){
 				if(!text)return "";
 				//var re =/(?:address|addr|add|location|office)[:,\-\s\n]*([\w\d-,.#\s]{9,}(?:CHINA|DUBAI))/mi;
-				var re =/(?:address|addr|add|location|office)s*[:,\-\s]*([\w\d-,.#\s]{9,})/mi;
+				var re =/(?:address|addr|add|location|office)s*[:,\-\s]*([\w\d-,.#\s]{9,},\s*\w+)/gi;
 		        var match = matchAll( text.replace(/\n/ig, " "), re);
 		        var addr = match && match.length>0 ? 
 		        			_.pluck(match ,1).filter( function(v,i){  v=ZZ.trim(v); if( v.length>10 && /\d/.test(v) && /\w/.test(v) ) return true; }).join(";") 
 		        			: ""; //
 				return addr;
 			}
-			return getEmail() + ", phone: " + getPhone()+ ", fax: " + getFax()+ ", addr: " + getAddress();
+			function getAddress2(){
+				if(!text)return "";
+				//var re =/(?:address|addr|add|location|office)[:,\-\s\n]*([\w\d-,.#\s]{9,}(?:CHINA|DUBAI))/mi;
+				var re =/(?:address|addr|add|location|office)s*[:,\-\s]*([\w\d-,.#\s]{9,},\s*\w+)/gi;
+
+				var searchStr = text.replace(/\n/ig, " ").replace(/\xa0/ig,' ').replace(/\s+/g,' ');
+		        var matchA = [];
+				
+				var lastPos = 0;
+				while ( match=re.exec(searchStr) ) {
+				  var v= match[0];
+				  var pos=match.index;
+
+				  lastPos = re.lastIndex;
+				  v=ZZ.trim(v); 
+				  if( v.length>10 && /\d/.test(v) && /\w/.test(v) ) {
+				  		matchA.push( v.replace(/\xa0/ig,' ').replace(/\s+/g,' ') );
+				  }
+				}
+
+	  		    var addr = matchA.length ? _.uniq( matchA ).join(";") : ""; //
+	  		     
+				return addr;
+			}
+			//return "email: " + getEmail() + ", phone: " + getPhone()+ ", fax: " + getFax()+ ", addr: " + getAddress();
+			return {email: getEmail(), phone:getPhone(), fax:getFax(), addr:getAddress2() }
 		}
 
 
@@ -365,7 +494,7 @@ function crawlerPage(url) {
 		var ROOT_URL = window.location.href;
 		var MAX_LEVEL = 1;	// max level of page to crawl
 		var SAME_COUNT = 20; // same structure URL
-		var MAX_HREF = 3; // skip the max link of page, and continue
+		var MAX_HREF = 99; // skip the max link of page, and continue
 
 		var LinkQueue={};
 		var LinkArray=[];
@@ -409,11 +538,26 @@ function crawlerPage(url) {
 						var dom = ZZ( '<div></div>' );
 						dom.html(data);
 						
-						sendMSG({
-							"cmd": "contactData",
-							"url": theurl,
-							"title": ZZ("title", dom).text(),
-							"contact": parseHTML( data, ZZ("body", dom).text(), theurl )
+						var tdom = ZZ( '<div></div>' );
+						tdom.html( data.replace(/<br\s*>|<br\s*\/>/ig, "&nbsp;") );
+						ZZ('script,style,object,embed', tdom).remove();
+						ZZ('body *', tdom).append('&nbsp;');
+						var pageText = ZZ(tdom).text();
+
+						DB_MSG(
+						{
+							type:"sub_page",
+							data:
+								{
+									"url": theurl,
+									"title": ZZ("title", dom).text(),
+									"numLink": ZZ("a", dom).size(),
+									//"html": data,
+									//"text": pageText,
+									"contact": parseHTML( ZZ(tdom).html(), ZZ("body", dom).text(), theurl ),
+									"dateSign": DateSign,
+									"date": +new Date()+Math.random()
+								}
 						});
 
 						if( ZZ("a", dom).size() > MAX_HREF ){
@@ -444,26 +588,38 @@ function crawlerPage(url) {
 
 		var pageHtml = ZZ('body').html();
 
-		var contact = parseHTML( pageHtml, pageText, window.location.href );
+		var dom = ZZ( '<div></div>' );
+		dom.html( pageHtml.replace(/<br\s*>|<br\s*\/>/ig, "&nbsp;") );
+		ZZ('script,style,object,embed', dom).remove();
+		ZZ('body *', dom).append('&nbsp;');
+		var pageText = ZZ(dom).text();
+
+		var contact = parseHTML( ZZ(dom).html(), pageText, window.location.href );
+
+		DB_MSG(
+		{
+			type:"main_page",
+			data:
+			{
+				"idx": config.idx,
+				"url": ROOT_URL,
+				"title": document.title,
+				"numLink": ZZ('a').size(), 
+				"snap": snapName+".jpg",
+				//"html": pageHtml,
+				//"text": pageText,
+				"contact": contact,
+				"dateSign": config.date,
+				"date": DateSign
+			}
+		});
+
 
 		if(!pageHtml || ZZ('a').size()==0 || ZZ('a').size()>MAX_HREF ){
 			checkComplete();
 			return;
 		}
 
-		var dom = ZZ( '<div></div>' );
-		dom.html( pageHtml.replace(/<br>|<br\s*\/>/ig, "&nbsp;") );
-		ZZ('script,style', dom).remove();
-		var pageText = ZZ(dom).text();
-
-		sendMSG({
-			"cmd": "contactData",
-			"url": ROOT_URL,
-			"title": document.title,
-			"contact": contact
-		});
-
-		
 
 		ZZ('a').each(function(){ 
 
@@ -477,7 +633,7 @@ function crawlerPage(url) {
 		
 	})();
 				
-			}, host, page.content, _MSGSIGN );
+			}, host, page.content, snapName, config, DateSign, _MSGSIGN, _DBSIGN );
 	}
 
 
@@ -485,20 +641,19 @@ function crawlerPage(url) {
 
 }
 
-function addPage(url, source){
+function addPage(url, config){
 	if( PageArray.length > MAX_LINK) return;
 	if( _.findWhere( PageArray, {url:url} ) ) return;
-	PageArray.push({ url: url, source: source ? source : "" } );
+	PageArray.push({ url: url, config: config||"" } );
 }
-function DB_MSG(json){
-	console.log(_MSGSIGN, JSON.stringify(json));
-}
+
 
 
 function getSearchResult( CONFIG, keyword ){
 
 	var url= keyword ? CONFIG.url.replace(/%s/g, encodeURIComponent(keyword)) : CONFIG.url ;
-	
+	CONFIG.url = url;
+
 	var urlObj= parseUrl(url);
 	var host = urlObj.base;
 	var filebase = DATA_FOLDER + "/" + host.split("//")[1].split("/")[0]+'_'+urlObj.query;
@@ -508,7 +663,7 @@ function getSearchResult( CONFIG, keyword ){
 	page.settings.resourceTimeout = 150000;
 	page.viewportSize = { width:1000, height:800 };
 
-
+	CONFIG.date = +new Date()+Math.random();
 
 	page.onResourceRequested = function(data, req) {
 	    //console.log('Request (*' + data.id + '): ', data.method, data.url);
@@ -529,14 +684,22 @@ function getSearchResult( CONFIG, keyword ){
 
 
 	page.onConsoleMessage=function(data){
+		if( ( new RegExp ("^"+_DBSIGN) ).test(data) ){
+			var d = JSON.parse(data.split(_DBSIGN)[1]);
+			wsend(d);
+			return;
+		}
+
 		if( ( new RegExp ("^"+_MSGSIGN) ).test(data) ){
 			var d = JSON.parse(data.split(_MSGSIGN)[1]);
+
 			if(d.cmd=='hrefData'){
 				console.log(d.data);
 				console.log(d.next);
 
-				d.data.forEach(function(v){
-					addPage(v, CONFIG.name);
+				d.data.forEach(function(v,i){
+					CONFIG.idx = i;
+					addPage(v, CONFIG);
 				});
 
 				if( !d.next || PageArray.length > MAX_LINK) return;
@@ -563,14 +726,16 @@ function getSearchResult( CONFIG, keyword ){
 	}
 
 	page.onLoadFinished =  function(status){
-		console.log(status );
+
 		if(status=='fail'){
 			setTimeout( function(){
 				page.open(url);
 			},1000);
 			return;
 		}
-		var c = page.evaluate( function(CONFIG, _MSGSIGN) {
+
+
+		var c = page.evaluate( function(CONFIG, _MSGSIGN, _DBSIGN) {
 
 			(function (){
 
@@ -606,27 +771,41 @@ function getSearchResult( CONFIG, keyword ){
 			function sendMSG(json){
 				console.log(_MSGSIGN, JSON.stringify(json));
 			}
+			function DB_MSG(json){
+				console.log(_DBSIGN, JSON.stringify(json));
+			}
+
 			function getResult(){
 				var items = document.querySelectorAll( CONFIG.item );
 				var jsonA = [];
-				items.forEach(function(v, i){
-					var href = v.querySelector(CONFIG.href);
-					var title = v.querySelector(CONFIG.title);
-					var desc = v.querySelector(CONFIG.desc);
+
+				for(var i=0; i<items.length; i++){
+					var v=items[i];
+					var href = v.querySelector(CONFIG.href).href;
+					var title = v.querySelector(CONFIG.title).innerHTML;
+					var desc = v.querySelector(CONFIG.desc).innerHTML;
 					var date = v.querySelector('.b_attribution').lastChild;
 					date = date.nodeType==3 ? trim(date.textContent) : "";
 					jsonA.push( {
 						"href": href,
-						"title": title,
-						"desc": desc,
-						"date": date
+						"title": encodeURIComponent(title),
+						"desc": encodeURIComponent(desc),
+						"date": date,
+						domain:'',
+						company: '',
+						email:'',
+						phone:'',
+						fax:'',
+						address:'',
+						age:'',
+						prestige:'',
+						location:'',
 					});
-				});
+				};
 				var hrefData = Array.prototype.map.call(jsonA, function(a, i) { return a.href  });
 				var n = document.querySelector(CONFIG.next);
 				
 				DB_MSG( {type:"search_result", config: CONFIG, result: jsonA } );
-
 				sendMSG({cmd:"hrefData", data:hrefData, next: n? n.href : ""  } );
 				sendMSG({cmd:"exit"});
 			}
@@ -636,7 +815,7 @@ function getSearchResult( CONFIG, keyword ){
 
 			})();
 
-	}, CONFIG, _MSGSIGN);
+	}, CONFIG, _MSGSIGN, _DBSIGN);
 
 	};
 	//end of onLoadFinished
@@ -654,19 +833,22 @@ var SearchConfig = [
 		item: '#b_results li.b_algo',
 		href: 'h2>a',
 		title: 'h2>a',
-		desc: '.b_caption>p',
-		company: '',
-		email:'',
-		phone:'',
-		fax:'',
-		address:'',
-		domain:'',
-		age:'',
-		prestige:'',
-		location:'',
+		desc: '.b_caption p',
 		page: 0,
 		next: '#b_results .b_pag nav li:last-child a'
 	},
+	{
+		name:"Bing CN", 
+		url: 'http://cn.bing.com/search?q=%s',
+		condition: 'document.querySelectorAll("#b_results li.b_algo").length>1 ',
+		item: '#b_results li.b_algo',
+		href: 'h2>a',
+		title: 'h2>a',
+		desc: '.b_caption p',
+		page: 0,
+		next: '#b_results .b_pag nav li:last-child a'
+	},
+
 	{
 		name:"Google Global", 
 		url: 'https://www.google.com/search?q=%s&qscrl=1&ncr&hl=en',
@@ -677,7 +859,10 @@ var SearchConfig = [
 	}
 ]
 
-getSearchResult( SearchConfig[0], "polyester fabric" );
+
+function init () {
+	getSearchResult( SearchConfig[1], "杉杉" );
+}
 
 
 /*

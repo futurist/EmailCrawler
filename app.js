@@ -12,47 +12,67 @@ MongoClient.connect(url, function(err, _db) {
   assert.equal(null, err);
   console.log("Connected correctly to server");
   db = _db;
+  runCmd("phantomjs19 main.js");
   return true;
 });
 
 
-var insertDocuments = function(callback) {
+var insertDoc = function(data, callback) {
   assert.notEqual(null, db, "Mongodb not connected. ");
-  // Get the documents collection
-  var collection = db.collection('test23');
-  // Insert some documents
-  collection.insert([
-    {a : 1}, {a : 2}, {a : 3}
-  ], function(err, result) {
-    assert.equal(err, null);
-    assert.equal(3, result.result.n);
-    assert.equal(3, result.ops.length);
-    console.log("Inserted 3 documents into the document collection");
-    callback(result);
-  });
+  var col = db.collection('test30');
+  switch(data.type){
+    case 'search_result':
+      col.insert(data, function(err, result) {
+        console.log( "inserted:", data , "\n");
+        if(callback) callback(result);
+      });
+      break;
+    case 'main_page':
+      col.insert(data.data, function(err, result) {
+        console.log( "inserted:", data , "\n");
+        if(callback) callback(result);
+      });
+      break;
+    case 'sub_page':
+      var dateSign = data.data.dateSign;
+      delete data.data.dateSign;
+      col.update({ date:dateSign }, { $push:{ child: data.data } }, function(err, result) {
+        console.log( "inserted:", data , "\n");
+        if(callback) callback(result);
+      });
+      break;
+    case 'page_close':
+      col.update({ date:data.date }, { $set:{ closed:true } }, function(err, result) {
+        console.log( "closed:", data.url , "\n");
+        if(callback) callback(result);
+      });
+      break;
+  }
 }
 
 /********* WebSocket Part ************/
 var WebSocketServer = require('ws').Server;
-var wss = new WebSocketServer({ port: 8080 });
+var wss = new WebSocketServer({ port: 81 });
 
 wss.on('connection', function connection(ws) {
   ws.on('close', function incoming(code, message) {
     console.log("WS close: ", code, message);
-    console.log("now close");
+    console.log("now close all process");
+    if(db) db.close();
     process.exit(1);
   });
-  ws.on('message', function incoming(message) {
-    console.log('received: %s', message);
+  ws.on('message', function incoming(data) {
+    //console.log('received: %s', data);
+    insertDoc( JSON.parse(data) );
   });
 
-  ws.send('something');
+  ws.send('connected to ws');
 });
 
 
 
 
-var _MSGSIGN = "_PHANTOMDATA";  
+var _DBSIGN = "_MONGODATA";  
 
 function _log () {
   for(var i=0; i<arguments.length; i++)
@@ -78,30 +98,31 @@ function runCmd (cmd, dir, callback) {
 
   proc.stdout.on('data', function (data) {
 
-    insertDocuments();
+      return;
+      
+      if( data && ( new RegExp ("^"+_DBSIGN) ).test(data) ) {
 
-    if( ( new RegExp ("^"+_MSGSIGN) ).test(data) ){
-      var d = JSON.parse(data.split(_MSGSIGN)[1]);
+      var d = JSON.parse(data.split(_DBSIGN)[1]);
 
       if(d.cmd=="contactData"){
         _log(d.url, d.title, d.contact);
-        insertDocuments(d);
       }
       if(d.cmd=="EXIT"){
         return;
       }
 
     }else{
-      _log(data);
+      //_log(data);
     }
 
   });
 
-  proc.stderr.on('data', function (data) {
-    _logErr(data);
+  proc.stderr.on('data', function (data) { 
+    //_logErr(data);
   });
 
   proc.on('close', function (code) {
+    if(db) db.close();
     console.log('app exited with code ' + code);
   });
 
@@ -112,6 +133,5 @@ function runCmd (cmd, dir, callback) {
 
 }
 
-runCmd("phantomjs main.js");
 
 

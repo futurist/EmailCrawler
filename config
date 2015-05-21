@@ -9,8 +9,8 @@
 	"ignoreSslErrors": true,
 	"sslProtocol": "any",
 	"maxDiskCacheSize": 100000,
+	//"proxy": "127.0.0.1:8087",
 	"outputEncoding": "utf8",
-	"proxy": "127.0.0.1:8087",
 	"remoteDebuggerPort" : 9000
 
 }
