@@ -207,8 +207,9 @@ function crawlerPage(url, config) {
 
 	PageObjs[url] = { status:"open", url:url, tryCount:0, startTime: new Date(), page:page };
 
-	function EXIT(){
+	function EXIT( exist ){
 		if(DateSign) wsend({ type:"page_close", date:DateSign, url: url });
+		if( !exist ) renderPage( snapName );
 		PageObjs[url].status = "close";
 		page.stop();
 		page.close();
@@ -227,6 +228,7 @@ function crawlerPage(url, config) {
 			head.insertBefore(style, head.firstChild);
 		});
 		page.render( DATA_FOLDER + "/" + filepath+".jpg", {format:'jpeg', quality:'80' });
+		console.log("render page:",  filepath+".jpg");
 	}
 
 	page.onConsoleMessage=function(data){
@@ -313,7 +315,6 @@ function crawlerPage(url, config) {
 			DateSign = +new Date();
 
 			var snapName = domain + "_" + DateSign;
-			renderPage( snapName );
 
 			DateSign += Math.random();
 
@@ -655,12 +656,12 @@ function crawlerPage(url, config) {
 
 	wsend({type:"page_exist",url:url, idx:config.idx, dateSign:config.date, withinDay:2}, this, function (result) {
 		if(result){
-			console.log("*************************", JSON.stringify(result) );
+			//console.log("*************************", JSON.stringify(result) );
+			EXIT(true);
 		}else{
-			console.log("+++++++++++++++++++++++++++++");
+			page.open(url);
 		}
 	});
-	//page.open(url);
 
 }
 
@@ -676,6 +677,7 @@ function getSearchResult( CONFIG, keyword ){
 
 	var url= keyword ? CONFIG.url.replace(/%s/g, encodeURIComponent(keyword)) : CONFIG.url ;
 	CONFIG.url = url;
+	CONFIG.page = CONFIG.page||0;
 
 	var urlObj= parseUrl(url);
 	var host = urlObj.base;
@@ -686,7 +688,7 @@ function getSearchResult( CONFIG, keyword ){
 	page.settings.resourceTimeout = 150000;
 	page.viewportSize = { width:1000, height:800 };
 
-	CONFIG.date = +new Date()+Math.random();
+	//CONFIG.date = +new Date()+Math.random();
 
 	page.onResourceRequested = function(data, req) {
 	    //console.log('Request (*' + data.id + '): ', data.method, data.url);
@@ -807,23 +809,29 @@ function getSearchResult( CONFIG, keyword ){
 					var href = v.querySelector(CONFIG.href).href;
 					var title = v.querySelector(CONFIG.title).innerHTML;
 					var desc = v.querySelector(CONFIG.desc).innerHTML;
-					var date = v.querySelector('.b_attribution').lastChild;
+					var date = v.querySelector(CONFIG.dateInfo).lastChild;
 					date = date.nodeType==3 ? trim(date.textContent) : "";
-					jsonA.push( {
+
+					var SR = {
 						"href": href,
 						"title": encodeURIComponent(title),
 						"desc": encodeURIComponent(desc),
-						"date": date,
+					}
+					if(date) SR.date = date;
+
+					var company={
 						domain:'',
 						company: '',
+						company_desc: '',
 						email:'',
 						phone:'',
 						fax:'',
 						address:'',
-						age:'',
-						prestige:'',
-						location:'',
-					});
+						// age:'',
+						// prestige:'',
+						// location:'',
+					}
+					jsonA.push( SR );
 				};
 				var hrefData = Array.prototype.map.call(jsonA, function(a, i) { return a.href  });
 				var n = document.querySelector(CONFIG.next);
@@ -848,43 +856,82 @@ function getSearchResult( CONFIG, keyword ){
 //end of getSearchResult
 
 
+// keywords & seRange : [] type
+function preSearchResult (seRange, keywords) {
+	if(!seRange || !keywords)return;
+
+	var DateSign = +new Date+Math.random();
+
+	function go (keyword) {
+		seRange.forEach(function  (v) {
+			var CONFIG = SearchConfig[v];
+			CONFIG.date = DateSign;
+			getSearchResult(CONFIG, keyword);
+		});
+	}
+
+	var meta = {
+		keywords: keywords, 
+		se:[0,1], 
+		include_keywords:"",
+		exclude_keywords:"",
+		in_domain:"", 
+		max_result:12, 
+		options:{ show_site:false } 
+	};
+
+	wsend( { type:"check_keyword", meta: meta }, function  (result) {
+		
+	});
+
+	
+}
+
 var SearchConfig = [
 	{
 		name:"Bing Global", 
+		site:"http://global.bing.com", 
 		url: 'http://global.bing.com/search?q=%s&setmkt=en-us&setlang=en-us',
 		condition: 'document.querySelectorAll("#b_results li.b_algo").length>1 ',
 		item: '#b_results li.b_algo',
 		href: 'h2>a',
 		title: 'h2>a',
 		desc: '.b_caption p',
-		page: 0,
+		dateInfo: '.b_attribution',
 		next: '#b_results .b_pag nav li:last-child a'
 	},
 	{
 		name:"Bing CN", 
+		site:"http://cn.bing.com", 
 		url: 'http://cn.bing.com/search?q=%s',
 		condition: 'document.querySelectorAll("#b_results li.b_algo").length>1 ',
 		item: '#b_results li.b_algo',
 		href: 'h2>a',
 		title: 'h2>a',
 		desc: '.b_caption p',
-		page: 0,
+		dateInfo: '.b_attribution',
 		next: '#b_results .b_pag nav li:last-child a'
 	},
 
 	{
 		name:"Google Global", 
+		site:"http://www.google.com", 
 		url: 'https://www.google.com/search?q=%s&qscrl=1&ncr&hl=en',
 		condition: 'document.querySelectorAll("li.g h3.r") && document.querySelectorAll("li.g h3.r").length>1 && document.querySelectorAll("li.g h3.r a.passed").length==0 ',
-		result: 'li.g h3.r a',
-		page: 0,
+		item: '#search li.g',
+		href: 'h3.r a',
+		title: 'h3.r a',
+		desc: 'span.st',
+		dateInfo: 'span.st span.f',
+		company: 'div.crc div.crl',
+		company_desc: 'div.crc div.cri',
 		next: '#pnnext'
 	}
 ]
 
-
 function init () {
-	getSearchResult( SearchConfig[1], "杉杉" );
+	//getSearchResult( SearchConfig[1], "杉杉" );
+	preSearchResult( [0,1], ["杉杉", "罗蒙"] );
 }
 
 

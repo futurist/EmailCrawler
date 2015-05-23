@@ -44,11 +44,13 @@ var insertDoc = function(data, callback) {
       break;
     case 'page_exist':
 
-      col.findOne( {url:data.url, date:{$gt: +new Date() - data.withinDay*24*60*60*1000 }}, {sort:[['_id', -1]] },  function(err, result) {
+      col.findOne( {url:data.url, closed:true, date:{$gt: +new Date() - data.withinDay*24*60*60*1000 }}, {sort:[['_id', -1]] },  function(err, result) {
         delete result._id;
         result.idx = data.idx;
         result.dateSign = data.dateSign;
-
+        col.insert( result, function(err){
+          console.log("using recent item:", result.date, result.url);
+        } )
         if(callback) callback(result);
       } );
 
@@ -64,6 +66,13 @@ var insertDoc = function(data, callback) {
         console.log( "closed:", data.url , "\n");
         if(callback) callback({});
       });
+      break;
+    case 'check_keyword':
+      col.insert( meta, function(err){} );
+      var keywords = data.meta.keywords;
+      keywords.forEach( function  (v) {
+        
+      } );
       break;
   }
 }
