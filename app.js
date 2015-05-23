@@ -1,6 +1,7 @@
 
 var spawn = require('child_process').spawn;
 var MongoClient = require('mongodb').MongoClient;
+var _ = require('underscore');
 var assert = require('assert');
 
 
@@ -23,14 +24,14 @@ var insertDoc = function(data, callback) {
   switch(data.type){
     case 'search_result':
       col.insert(data, function(err, result) {
-        console.log( "inserted:", data , "\n");
-        if(callback) callback(result);
+        //console.log( "inserted:", data , "\n");
+        if(callback) callback({});
       });
       break;
     case 'main_page':
       col.insert(data.data, function(err, result) {
         console.log( "inserted:", data , "\n");
-        if(callback) callback(result);
+        if(callback) callback({});
       });
       break;
     case 'sub_page':
@@ -38,13 +39,30 @@ var insertDoc = function(data, callback) {
       delete data.data.dateSign;
       col.update({ date:dateSign }, { $push:{ child: data.data } }, function(err, result) {
         console.log( "inserted:", data , "\n");
+        if(callback) callback({});
+      });
+      break;
+    case 'page_exist':
+
+      col.findOne( {url:data.url, date:{$gt: +new Date() - data.withinDay*24*60*60*1000 }}, {sort:[['_id', -1]] },  function(err, result) {
+        delete result._id;
+        result.idx = data.idx;
+        result.dateSign = data.dateSign;
+
         if(callback) callback(result);
+      } );
+
+      return;
+      col.find({url:data.url}).toArray(function  (err, docs) {
+        //console.log(err, docs);
+        var docs = _.filter( docs, function(v){ return (+new Date()-v.date)/1000/60/60/24 < data.withinDay } );
+        if(callback) callback({count: docs.length});
       });
       break;
     case 'page_close':
       col.update({ date:data.date }, { $set:{ closed:true } }, function(err, result) {
         console.log( "closed:", data.url , "\n");
-        if(callback) callback(result);
+        if(callback) callback({});
       });
       break;
   }
@@ -63,7 +81,17 @@ wss.on('connection', function connection(ws) {
   });
   ws.on('message', function incoming(data) {
     //console.log('received: %s', data);
-    insertDoc( JSON.parse(data) );
+    var msg = JSON.parse(data);
+    var msgid = msg.msgid;
+    delete msg.msgid;
+
+    if(msg.type!='search_result') console.log(msgid, msg);
+
+    var cb = msgid? function  (retJson) {
+      ws.send(JSON.stringify( {msgid:msgid, result:retJson} ) );
+    } : null;
+
+    insertDoc( msg, cb );
   });
 
   ws.send('connected to ws');
@@ -98,6 +126,7 @@ function runCmd (cmd, dir, callback) {
 
   proc.stdout.on('data', function (data) {
 
+      _log(data);
       return;
       
       if( data && ( new RegExp ("^"+_DBSIGN) ).test(data) ) {

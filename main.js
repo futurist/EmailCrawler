@@ -29,8 +29,16 @@ if( sys.args.indexOf('nows')>-1 ){
 
 	ws = new WebSocket('ws://localhost:81');
 	ws.onopen = function (e) {
-		ws.onmessage = function (msg) {
-			console.log(msg.data);
+		ws.onmessage = function (e) {
+
+			if(e.data[0]!="{")return;
+	        var d=JSON.parse(e.data);
+	        var callObj= wsQueue[d.msgid];
+	        if(callObj){
+	            callObj[1].call(callObj[0], d.result);
+	            delete wsQueue[d.msgid];
+	        }
+
 		}
 		ws.onclose = function (code, reason, bClean) {
 			console.log("ws error: ", code, reason);
@@ -41,10 +49,19 @@ if( sys.args.indexOf('nows')>-1 ){
 
 }
 
-function wsend(json, callback){
-	if(ws){
+
+var wsQueue={};
+
+function wsend(json, that, callback){
+
+	if(callback){
+	    json.msgid = (+new Date()) + (Math.random().toString().slice(-4) );
+	    wsQueue[json.msgid] = [that, callback];
+	}
+
+	if(ws) {
 		ws.send(JSON.stringify(json));
-	}else{
+	} else {
 		console.log(_DBSIGN, JSON.stringify(json) );
 	}
 }
@@ -636,8 +653,14 @@ function crawlerPage(url, config) {
 			}, host, page.content, snapName, config, DateSign, _MSGSIGN, _DBSIGN );
 	}
 
-
-	page.open(url);
+	wsend({type:"page_exist",url:url, idx:config.idx, dateSign:config.date, withinDay:2}, this, function (result) {
+		if(result){
+			console.log("*************************", JSON.stringify(result) );
+		}else{
+			console.log("+++++++++++++++++++++++++++++");
+		}
+	});
+	//page.open(url);
 
 }
 
