@@ -198,6 +198,8 @@ function crawlerPage(url, config) {
 	var domain = host.split("//")[1].split("/")[0];
 	var filebase = DATA_FOLDER + "/" + domain;
 	var DateSign;
+	var snapName;
+	var DB_MainPageExists = false;
 
 	var page = require('webpage').create();
 	page.settings.userAgent = 'Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.57 Safari/537.36';
@@ -229,6 +231,7 @@ function crawlerPage(url, config) {
 		});
 		page.render( DATA_FOLDER + "/" + filepath+".jpg", {format:'jpeg', quality:'80' });
 		console.log("render page:",  filepath+".jpg");
+
 	}
 
 	page.onConsoleMessage=function(data){
@@ -312,14 +315,12 @@ function crawlerPage(url, config) {
 			fs.write( filebase + "_html.txt", page.content, 'w');
 
 
-			DateSign = +new Date();
+			if(!DateSign) {
+				DateSign = +new Date() + Math.random();
+				snapName = domain + "_" + parseInt(DateSign);
+			}
 
-			var snapName = domain + "_" + DateSign;
-
-			DateSign += Math.random();
-
-
-			var c = page.evaluate( function(host, HTML, snapName, config, DateSign, _MSGSIGN, _DBSIGN) {
+			var c = page.evaluate( function(host, HTML, snapName, config, DateSign, DB_MainPageExists, _MSGSIGN, _DBSIGN) {
 
 	__PAGECLOSED = false;
 
@@ -614,11 +615,13 @@ function crawlerPage(url, config) {
 
 		var contact = parseHTML( ZZ(dom).html(), pageText, window.location.href );
 
+		if(!DB_MainPageExists)
 		DB_MSG(
 		{
 			type:"main_page",
 			data:
 			{
+				"role": "page",
 				"idx": config.idx,
 				"url": ROOT_URL,
 				"title": document.title,
@@ -627,7 +630,7 @@ function crawlerPage(url, config) {
 				//"html": pageHtml,
 				//"text": pageText,
 				"contact": contact,
-				"dateSign": config.date,
+				"dateSign": [config.date],
 				"date": DateSign
 			}
 		});
@@ -651,14 +654,19 @@ function crawlerPage(url, config) {
 		
 	})();
 				
-			}, host, page.content, snapName, config, DateSign, _MSGSIGN, _DBSIGN );
+			}, host, page.content, snapName, config, DateSign, DB_MainPageExists, _MSGSIGN, _DBSIGN );
 	}
 
-	wsend({type:"page_exist",url:url, idx:config.idx, dateSign:config.date, withinDay:2}, this, function (result) {
-		if(result){
-			//console.log("*************************", JSON.stringify(result) );
+	wsend({type:"main_exist",url:url, idx:config.idx, dateSign:config.date, withinDay:2}, this, function (result) {
+		if(result && result.closed){
+			console.log("************************* exist, exit: ", result.url );
 			EXIT(true);
-		}else{
+		} else {
+			if(result){
+				DateSign = result.date;
+				snapName = result.snap;
+				DB_MainPageExists = true;
+			} 
 			page.open(url);
 		}
 	});
@@ -677,7 +685,11 @@ function getSearchResult( CONFIG, keyword ){
 
 	var url= keyword ? CONFIG.url.replace(/%s/g, encodeURIComponent(keyword)) : CONFIG.url ;
 	CONFIG.url = url;
+	CONFIG.keyword = CONFIG.keyword || keyword;
 	CONFIG.page = CONFIG.page||0;
+	if(CONFIG.page==0){
+		CONFIG.date = +new Date()+Math.random();
+	}
 
 	var urlObj= parseUrl(url);
 	var host = urlObj.base;
@@ -688,7 +700,6 @@ function getSearchResult( CONFIG, keyword ){
 	page.settings.resourceTimeout = 150000;
 	page.viewportSize = { width:1000, height:800 };
 
-	//CONFIG.date = +new Date()+Math.random();
 
 	page.onResourceRequested = function(data, req) {
 	    //console.log('Request (*' + data.id + '): ', data.method, data.url);
@@ -930,8 +941,13 @@ var SearchConfig = [
 ]
 
 function init () {
+	getSearchResult( SearchConfig[1], "杉杉" );
+	return;
+	wsend({type:"global_config", SearchConfig: SearchConfig}, this, function  (ret) {
+		preSearchResult( ["Bing Global", "Bing CN"], ["杉杉", "罗蒙"] );
+	});
 	//getSearchResult( SearchConfig[1], "杉杉" );
-	preSearchResult( [0,1], ["杉杉", "罗蒙"] );
+	//preSearchResult( [0,1], ["杉杉", "罗蒙"] );
 }
 
 
