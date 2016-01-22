@@ -1,11 +1,5 @@
 .DS_Store
 *.log
-*.txt
-*.png
-*.jpg
-*.pdf
-*.html
-*.htm
 cookies.*
 DATA/
 data/
